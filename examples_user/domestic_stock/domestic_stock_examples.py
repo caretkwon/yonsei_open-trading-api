@@ -11,6 +11,13 @@ from domestic_stock_functions import *
 logging.basicConfig(level=logging.INFO, format='%(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+import kis_auth as ka
+
+# 실전투자 인증
+# ka.auth(svr="prod", product="01") 
+
+# 모의투자: svr="vps"
+ka.auth(svr="vps", product="01") 
 # 인증
 ka.auth()
 trenv = ka.getTREnv()
