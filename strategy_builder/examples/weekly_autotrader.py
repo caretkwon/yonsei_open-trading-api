@@ -1,0 +1,323 @@
+"""
+주간 자동 매매 전략: 월-금 자동 매매
+
+기능:
+  - 월요일 9:30부터 금요일 14:00까지 매시간 삼성전자 1주 매수 (시장가)
+  - 금요일 15:10에 보유한 모든 삼성전자 매도 (종가 시장가)
+
+사용법:
+  # 모의투자
+  uv run python examples/weekly_autotrader.py --env vps
+  
+  # 실전투자
+  uv run python examples/weekly_autotrader.py --env prod
+"""
+
+import argparse
+import sys
+import os
+import time
+from datetime import datetime, time as dt_time
+from zoneinfo import ZoneInfo
+import logging
+
+import pandas as pd
+
+# strategy_builder 경로 추가 (kis_auth 모듈용)
+strategy_builder_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, strategy_builder_root)
+
+# 프로젝트 루트 경로 추가 (examples_user 모듈용)
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+sys.path.insert(0, project_root)
+
+import kis_auth as ka
+from examples_user.domestic_stock.domestic_stock_functions import order_cash, inquire_daily_ccld
+
+# 설정
+STOCK_CODE = "005930"  # 삼성전자
+STOCK_NAME = "삼성전자"
+ORDER_QUANTITY = "1"   # 1주씩 주문
+KST = ZoneInfo("Asia/Seoul")
+
+# 글로벌 상태
+trading_state = {
+    "positions": 0,  # 현재 보유 주식 수
+    "buy_times": [],  # 매수 시간 기록
+    "is_running": False
+}
+
+
+def log(message: str):
+    """시간 포함 로그 출력"""
+    timestamp = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{timestamp}] {message}")
+
+
+def get_positions():
+    """계좌의 삼성전자 보유 수량 조회"""
+    try:
+        env = ka.getTREnv()
+        
+        # 보유 종목 조회
+        df = inquire_daily_ccld(
+            cano=env.my_acct,
+            acnt_prdt_cd=env.my_prod,
+            inqr_dvsn="01",  # 보유 종목만
+            unpr_dvsn="01",
+            mrgn_cblc_amt_dvsn="01"
+        )
+        
+        if df is not None and not df.empty:
+            # 삼성전자 행 찾기
+            samsung_row = df[df['종목코드'] == STOCK_CODE]
+            if not samsung_row.empty:
+                qty = int(samsung_row['보유수량'].iloc[0])
+                trading_state["positions"] = qty
+                log(f"현재 보유: {qty}주")
+                return qty
+        
+        log("보유 종목 없음")
+        return 0
+        
+    except Exception as e:
+        log(f"보유 수량 조회 실패: {e}")
+        return 0
+
+
+def buy_one():
+    """1주 매수 (시장가)"""
+    try:
+        env = ka.getTREnv()
+        
+        log(f"매수 주문 시작: 1주")
+        
+        result = order_cash(
+            env_dv="real" if not ka.isPaperTrading() else "demo",
+            ord_dv="buy",
+            cano=env.my_acct,
+            acnt_prdt_cd=env.my_prod,
+            pdno=STOCK_CODE,
+            ord_dvsn="01",        # 시장가
+            ord_qty=ORDER_QUANTITY,
+            ord_unpr="0",         # 시장가는 0
+            excg_id_dvsn_cd="KRX"
+        )
+        
+        # 결과 확인
+        if result is not None and not result.empty:
+            # 주문 성공 여부 확인
+            msg = result.get('msg', [''])[0] if isinstance(result.get('msg'), list) else result.get('msg', '')
+            if 'success' in msg.lower() or '주문' in msg:
+                trading_state["positions"] += 1
+                trading_state["buy_times"].append(datetime.now(KST))
+                log(f"✓ 매수 완료! 누적: {trading_state['positions']}주")
+            else:
+                log(f"✗ 매수 실패: {msg}")
+        else:
+            log("✗ 매수 응답 없음")
+        
+        time.sleep(1)
+        
+    except Exception as e:
+        log(f"✗ 매수 오류: {e}")
+
+
+def sell_all():
+    """보유한 모든 주식 매도 (시장가)"""
+    try:
+        if trading_state["positions"] <= 0:
+            log("매도할 주식 없음")
+            return
+        
+        env = ka.getTREnv()
+        qty_to_sell = trading_state["positions"]
+        
+        log(f"매도 주문 시작: {qty_to_sell}주")
+        
+        result = order_cash(
+            env_dv="real" if not ka.isPaperTrading() else "demo",
+            ord_dv="sell",
+            cano=env.my_acct,
+            acnt_prdt_cd=env.my_prod,
+            pdno=STOCK_CODE,
+            ord_dvsn="01",        # 시장가 (종가)
+            ord_qty=str(qty_to_sell),
+            ord_unpr="0",
+            excg_id_dvsn_cd="KRX"
+        )
+        
+        # 결과 확인
+        if result is not None and not result.empty:
+            msg = result.get('msg', [''])[0] if isinstance(result.get('msg'), list) else result.get('msg', '')
+            if 'success' in msg.lower() or '주문' in msg:
+                log(f"✓ 매도 완료! 판매: {qty_to_sell}주")
+                trading_state["positions"] = 0
+                trading_state["buy_times"] = []
+            else:
+                log(f"✗ 매도 실패: {msg}")
+        else:
+            log("✗ 매도 응답 없음")
+        
+        time.sleep(1)
+        
+    except Exception as e:
+        log(f"✗ 매도 오류: {e}")
+
+
+def schedule_trades():
+    """매매 스케줄 실행 (테스트용 - 수동 시간)"""
+    log("=" * 60)
+    log("주간 자동 매매 시작")
+    log(f"종목: {STOCK_NAME} ({STOCK_CODE})")
+    log(f"환경: {'모의투자' if ka.isPaperTrading() else '실전투자'}")
+    log(f"일정: 월 9:30 ~ 금 14:00 매시간 1주 매수, 금 15:10 전량 매도")
+    log("=" * 60)
+    
+    trading_state["is_running"] = True
+
+
+def should_buy():
+    """현재 시간에 매수해야 하는지 확인"""
+    now = datetime.now(KST)
+    weekday = now.weekday()  # 0=월, 4=금, 5=토, 6=일
+    hour = now.hour
+    minute = now.minute
+    
+    # 월~금, 9:30~14:00
+    if weekday < 5:  # 월~금
+        if 9 <= hour <= 14:
+            if hour == 9 and minute < 30:
+                return False
+            if hour == 14 and minute > 0:
+                return False
+            return True
+    
+    return False
+
+
+def should_sell():
+    """현재 시간에 매도해야 하는지 확인"""
+    now = datetime.now(KST)
+    weekday = now.weekday()
+    hour = now.hour
+    minute = now.minute
+    
+    # 금요일 15:10
+    if weekday == 4:  # 금요일
+        if hour == 15 and 10 <= minute < 11:
+            return True
+    
+    return False
+
+
+def run_manual_mode():
+    """수동 입력 모드 (테스트용)"""
+    print("\n[수동 모드]")
+    print("명령어: buy, sell, status, exit")
+    
+    while True:
+        cmd = input("\n명령 입력> ").strip().lower()
+        
+        if cmd == "buy":
+            buy_one()
+        elif cmd == "sell":
+            sell_all()
+        elif cmd == "status":
+            print(f"보유: {trading_state['positions']}주")
+            print(f"매수 시간: {[t.strftime('%H:%M') for t in trading_state['buy_times']]}")
+        elif cmd == "exit":
+            print("프로그램 종료")
+            break
+        else:
+            print("잘못된 명령어")
+
+
+def run_scheduled_mode():
+    """자동 스케줄 모드 (실제 운영)"""
+    schedule_trades()
+    
+    # APScheduler 설치 필요
+    try:
+        from apscheduler.schedulers.background import BackgroundScheduler
+    except ImportError:
+        log("! APScheduler 설치 필요: pip install apscheduler")
+        log("! 수동 모드로 전환합니다")
+        run_manual_mode()
+        return
+    
+    scheduler = BackgroundScheduler(timezone=str(KST))
+    
+    # 월~금 10:00~15:00 매시간 정각에 매수
+    scheduler.add_job(
+        buy_one,
+        'cron',
+        day_of_week='mon-fri',
+        hour='10-15',
+        minute='0',
+        name='hourly_buy'
+    )
+    
+    # 금요일 15:10에 전량 매도
+    scheduler.add_job(
+        sell_all,
+        'cron',
+        day_of_week='fri',
+        hour='15',
+        minute='10',
+        name='friday_sell'
+    )
+    
+    scheduler.start()
+    log("스케줄러 시작됨")
+    log("Ctrl+C 입력으로 종료\n")
+    
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        log("\n스케줄러 종료 중...")
+        scheduler.shutdown()
+        log("종료되었습니다")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="주간 자동 매매")
+    parser.add_argument(
+        "--env",
+        type=str,
+        default="vps",
+        choices=["prod", "vps"],
+        help="실행 환경 (prod=실전, vps=모의)"
+    )
+    parser.add_argument(
+        "--mode",
+        type=str,
+        default="manual",
+        choices=["manual", "schedule"],
+        help="실행 모드 (manual=수동, schedule=자동)"
+    )
+    
+    args = parser.parse_args()
+    
+    # 인증
+    log("KIS API 인증 중...")
+    try:
+        ka.auth(svr=args.env)
+        log("✓ 인증 완료")
+    except Exception as e:
+        log(f"✗ 인증 실패: {e}")
+        return
+    
+    # 현재 보유 확인
+    get_positions()
+    
+    # 모드 선택
+    if args.mode == "schedule":
+        run_scheduled_mode()
+    else:
+        run_manual_mode()
+
+
+if __name__ == "__main__":
+    main()
