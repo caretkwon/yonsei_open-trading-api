@@ -1,0 +1,41 @@
+version: "1.0"
+
+metadata:
+  name: "평균회귀"
+  description: "N일 평균 대비 이탈 시 매매"
+  author: "KIS"
+  tags:
+    - mean_reversion
+    - reversal
+
+strategy:
+  id: mean_reversion
+  category: reversal
+
+  indicators:
+    - id: disparity
+      alias: disp_5
+      params:
+        period: 5
+
+  entry:
+    logic: AND
+    conditions:
+      - indicator: disp_5
+        operator: less_equal
+        compare_to: 97
+
+  exit:
+    logic: OR
+    conditions:
+      - indicator: disp_5
+        operator: greater_equal
+        compare_to: 103
+
+risk:
+  stop_loss:
+    enabled: true
+    percent: 10
+  take_profit:
+    enabled: true
+    percent: 10

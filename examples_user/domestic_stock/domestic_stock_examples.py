@@ -12,9 +12,15 @@ logging.basicConfig(level=logging.INFO, format='%(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # 인증
-ka.auth()
+ka.auth(svr="vps")  # 또는 "vps", "prod"
 trenv = ka.getTREnv()
+##############################################################################################
+# 삼성전자 현재가 시세 조회
+##############################################################################################
+result = inquire_price(env_dv="real", fid_cond_mrkt_div_code="J", fid_input_iscd="005930")
+print(result)
 
+"""
 ##############################################################################################
 # [국내주식] 기본시세 > 국내주식 시간외잔량 순위[v1_국내주식-093]
 ##############################################################################################
@@ -1254,3 +1260,5 @@ df = volume_rank(fid_cond_mrkt_div_code="J", fid_cond_scr_div_code="20171", fid_
                  fid_blng_cls_code="0", fid_trgt_cls_code="111111111", fid_trgt_exls_cls_code="0000000000",
                  fid_input_price_1="0", fid_input_price_2="1000000", fid_vol_cnt="100000", fid_input_date_1="")
 print(df)
+
+"""
