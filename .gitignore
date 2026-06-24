@@ -151,12 +151,12 @@ yarn-error.log*
 
 # ===== Lock files =====
 *.lock
-
+"""
 # ===== KIS (민감 정보) =====
 KIS/
 .master/
 .kis_token*.json
-
+"""
 # ===== Lean workspace =====
 .lean-workspace/
 
