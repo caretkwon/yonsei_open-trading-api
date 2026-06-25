@@ -32,7 +32,7 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..
 sys.path.insert(0, project_root)
 
 import kis_auth as ka
-from examples_user.domestic_stock.domestic_stock_functions import order_cash, inquire_daily_ccld
+from examples_user.domestic_stock.domestic_stock_functions import order_cash, inquire_balance
 
 # 설정
 STOCK_CODE = "005930"  # 삼성전자
@@ -44,7 +44,8 @@ KST = ZoneInfo("Asia/Seoul")
 trading_state = {
     "positions": 0,  # 현재 보유 주식 수
     "buy_times": [],  # 매수 시간 기록
-    "is_running": False
+    "is_running": False,
+    "is_paper": True  # 기본값은 모의투자 모드
 }
 
 
@@ -57,29 +58,35 @@ def log(message: str):
 def get_positions():
     """계좌의 삼성전자 보유 수량 조회"""
     try:
+        ka.auth(svr="vps", product="01")
         env = ka.getTREnv()
-        
-        # 보유 종목 조회
-        df = inquire_daily_ccld(
+        env_dv = "demo" if trading_state.get("is_paper", True) else "real"
+
+        balance_df, _ = inquire_balance(
+            env_dv=env_dv,
             cano=env.my_acct,
             acnt_prdt_cd=env.my_prod,
-            inqr_dvsn="01",  # 보유 종목만
+            afhr_flpr_yn="N",
+            inqr_dvsn="01",
             unpr_dvsn="01",
-            mrgn_cblc_amt_dvsn="01"
+            fund_sttl_icld_yn="N",
+            fncg_amt_auto_rdpt_yn="N",
+            prcs_dvsn="00"
         )
-        
-        if df is not None and not df.empty:
-            # 삼성전자 행 찾기
-            samsung_row = df[df['종목코드'] == STOCK_CODE]
+
+        if balance_df is not None and not balance_df.empty:
+            samsung_row = balance_df[balance_df['pdno'] == STOCK_CODE]
             if not samsung_row.empty:
-                qty = int(samsung_row['보유수량'].iloc[0])
+                raw_qty = samsung_row['hldg_qty'].iloc[0]
+                qty_value = pd.to_numeric(raw_qty, errors='coerce')
+                qty = int(qty_value) if pd.notna(qty_value) else 0
                 trading_state["positions"] = qty
                 log(f"현재 보유: {qty}주")
                 return qty
-        
+
         log("보유 종목 없음")
         return 0
-        
+
     except Exception as e:
         log(f"보유 수량 조회 실패: {e}")
         return 0
@@ -88,12 +95,15 @@ def get_positions():
 def buy_one():
     """1주 매수 (시장가)"""
     try:
+        ka.auth(svr="vps", product="01")
         env = ka.getTREnv()
-        
+
         log(f"매수 주문 시작: 1주")
         
+        env_dv = "demo" if trading_state.get("is_paper", True) else "real"
+
         result = order_cash(
-            env_dv="real" if not ka.isPaperTrading() else "demo",
+            env_dv=env_dv,
             ord_dv="buy",
             cano=env.my_acct,
             acnt_prdt_cd=env.my_prod,
@@ -129,14 +139,17 @@ def sell_all():
         if trading_state["positions"] <= 0:
             log("매도할 주식 없음")
             return
-        
+
+        ka.auth(svr="vps", product="01")
         env = ka.getTREnv()
         qty_to_sell = trading_state["positions"]
         
         log(f"매도 주문 시작: {qty_to_sell}주")
         
+        env_dv = "demo" if trading_state.get("is_paper", True) else "real"
+
         result = order_cash(
-            env_dv="real" if not ka.isPaperTrading() else "demo",
+            env_dv=env_dv,
             ord_dv="sell",
             cano=env.my_acct,
             acnt_prdt_cd=env.my_prod,
@@ -170,10 +183,10 @@ def schedule_trades():
     log("=" * 60)
     log("주간 자동 매매 시작")
     log(f"종목: {STOCK_NAME} ({STOCK_CODE})")
-    log(f"환경: {'모의투자' if ka.isPaperTrading() else '실전투자'}")
-    log(f"일정: 월 9:30 ~ 금 14:00 매시간 1주 매수, 금 15:10 전량 매도")
+    log(f"환경: {'모의투자' if trading_state.get('is_paper', True) else '실전투자'}")
+    log("일정: 평일 09:05/09:10/09:15 ... 5분 간격으로 매수/매도 반복")
     log("=" * 60)
-    
+
     trading_state["is_running"] = True
 
 
@@ -183,17 +196,20 @@ def should_buy():
     weekday = now.weekday()  # 0=월, 4=금, 5=토, 6=일
     hour = now.hour
     minute = now.minute
-    
-    # 월~금, 9:30~14:00
-    if weekday < 5:  # 월~금
-        if 9 <= hour <= 14:
-            if hour == 9 and minute < 30:
-                return False
-            if hour == 14 and minute > 0:
-                return False
-            return True
-    
-    return False
+
+    if weekday >= 5:
+        return False
+
+    if hour < 9 or hour > 15:
+        return False
+
+    if hour == 9 and minute < 5:
+        return False
+
+    if hour == 15 and minute > 0:
+        return False
+
+    return minute in {5, 15, 25, 35, 45, 55}
 
 
 def should_sell():
@@ -202,13 +218,20 @@ def should_sell():
     weekday = now.weekday()
     hour = now.hour
     minute = now.minute
-    
-    # 금요일 15:10
-    if weekday == 4:  # 금요일
-        if hour == 15 and 10 <= minute < 11:
-            return True
-    
-    return False
+
+    if weekday >= 5:
+        return False
+
+    if hour < 9 or hour > 15:
+        return False
+
+    if hour == 9 and minute < 10:
+        return False
+
+    if hour == 15 and minute > 0:
+        return False
+
+    return minute in {10, 20, 30, 40, 50, 0}
 
 
 def run_manual_mode():
@@ -248,24 +271,22 @@ def run_scheduled_mode():
     
     scheduler = BackgroundScheduler(timezone=str(KST))
     
-    # 월~금 10:00~15:00 매시간 정각에 매수
     scheduler.add_job(
-        buy_one,
+        lambda: buy_one() if should_buy() else None,
         'cron',
         day_of_week='mon-fri',
-        hour='10-15',
-        minute='0',
-        name='hourly_buy'
+        minute='5,15,25,35,45,55',
+        second='0',
+        name='buy_cycle'
     )
-    
-    # 금요일 15:10에 전량 매도
+
     scheduler.add_job(
-        sell_all,
+        lambda: sell_all() if should_sell() else None,
         'cron',
-        day_of_week='fri',
-        hour='15',
-        minute='10',
-        name='friday_sell'
+        day_of_week='mon-fri',
+        minute='10,20,30,40,50,0',
+        second='0',
+        name='sell_cycle'
     )
     
     scheduler.start()
@@ -301,6 +322,8 @@ def main():
     args = parser.parse_args()
     
     # 인증
+    trading_state["is_paper"] = (args.env == "vps")
+
     log("KIS API 인증 중...")
     try:
         ka.auth(svr=args.env)
