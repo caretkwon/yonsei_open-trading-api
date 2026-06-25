@@ -4,8 +4,8 @@ my_app: "PSo3qtNJGrcE3KFT2ZJAWaEYr1HJYQXI9JCT"
 my_sec: "bl8E0wdFO8F+dwN0koUaX8HALMHJBCwwWWTVaWy4YvXbuWHzcNvS2IFFpU37vp6zTzVFiz8VC2sviOQggYOmS/FSPvA5/qcIHCZ11BY9q3D9678agy/ZxlYOe1G0gjLpq4kA/Bm9gFgXD8bPcyQGxN7rlhVcuTE76D+vbs0uXQW2eNRRAR8="
 
 #모의투자
-paper_app: "PSpjQMY1oYdo4ukRaIoH2XpjtpR5Xv5pyPUX"
-paper_sec: "16UaPytS8bTRvam4cDu3u0a+OS5AKKii1tDxzo+LGoFPaMANYFxtvew9pWh+r/7mzz70kJTDxpUUOrQ6vD16KfqIqpvu5ndtqhrl0sxLx6TO1tImr/cwHiLrqNL28TJhi5+6ztji15ZmL+7PgAT6cC/z88HisgGJZ0oTfnZoorFAXzWihS4="
+paper_app: "PSVOUf3xwzZ3pUL8Qeq0LZr39jvyLHgVdtQS"
+paper_sec: "BClqYI9apXQRdjcTPGnPS/VUIFJaIuRDbapSTTND3Vkfv3nq4xCVfpZt7Xk/zjihEddO8SFa2MUNa/o6yrSpT7niYvhYPPXZsUoDtuVed7iAoHekih7URYZECOhrOpYmUUu+TGH16IjKHEelfovzbQZncIKYzxO+PMm1184b7gOhJJH4QEE="
 
 # HTS ID
 my_htsid: "caretk"
@@ -13,7 +13,7 @@ my_htsid: "caretk"
 #계좌번호 앞 8자리
 my_acct_stock: "44174781"
 my_acct_future: "선물옵션계좌 8자리"
-my_paper_stock: "50173429"
+my_paper_stock: "50194723"
 my_paper_future: "모의투자 선물옵션계좌 8자리"
 
 #계좌번호 뒤 2자리
