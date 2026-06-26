@@ -29,19 +29,28 @@ from Crypto.Cipher import AES
 # pip install pycryptodome
 from Crypto.Util.Padding import unpad
 
-clearConsole = lambda: os.system("cls" if os.name in ("nt", "dos") else "clear")
+
+def clearConsole():
+    return os.system("cls" if os.name in ("nt", "dos") else "clear")
 
 key_bytes = 32
-config_root = os.path.join(os.path.expanduser("~"), "KIS", "config")
+# config_root = os.path.join(os.path.expanduser("~"), "KIS", "config")
 # config_root = "$HOME/KIS/config/"  # 토큰 파일이 저장될 폴더, 제3자가 찾기 어렵도록 경로 설정하시기 바랍니다.
 # token_tmp = config_root + 'KIS000000'  # 토큰 로컬저장시 파일 이름 지정, 파일이름을 토큰값이 유추가능한 파일명은 삼가바랍니다.
 # token_tmp = config_root + 'KIS' + datetime.today().strftime("%Y%m%d%H%M%S")  # 토큰 로컬저장시 파일명 년월일시분초
+# token_tmp = os.path.join(
+#     config_root, f"KIS{datetime.today().strftime('%Y%m%d')}"
+#)  # 토큰 로컬저장시 파일명 년월일
+
+config_root = "/workspaces/yonsei_open-trading-api/KIS/config/"  # 토큰 파일이 저장될 폴더, 제3자가 찾기 어렵도록 경로 설정하시기 바랍니다.
+# token_tmp = config_root + 'KIS000000'  # 토큰 로컬저장시 파일 이름 지정, 파일이름을 토큰값이 유추가능한 파일명은 삼가바랍니다.
+# token_tmp = config_root + 'KIS' + datetime.today().strftime("%Y%m%d%H%M%S")  # 토큰 로컬저장시 파일명 년월일시분초
 token_tmp = os.path.join(
-    config_root, f"KIS{datetime.today().strftime('%Y%m%d')}"
+    config_root, f"KIS{datetime.today().strftime('%Y%m%d%H')}"
 )  # 토큰 로컬저장시 파일명 년월일
 
 # 접근토큰 관리하는 파일 존재여부 체크, 없으면 생성
-if os.path.exists(token_tmp) == False:
+if not os.path.exists(token_tmp):
     f = open(token_tmp, "w+")
 
 # 앱키, 앱시크리트, 토큰, 계좌번호 등 저장관리, 자신만의 경로와 파일명으로 설정하시기 바랍니다.
@@ -55,6 +64,12 @@ _autoReAuth = False
 _DEBUG = False
 _isPaper = False
 _smartSleep = 0.1
+
+# Rate Limiter: 모든 REST API 호출을 직렬화하여 초당 제한 준수
+import threading
+
+_rate_lock = threading.Lock()
+_last_api_call_time = 0.0
 
 # 기본 헤더값 정의
 _base_headers = {
@@ -135,7 +150,7 @@ def isPaperTrading():  # 모의투자 매매
 
 
 # 실전투자면 'prod', 모의투자면 'vps'를 셋팅 하시기 바랍니다.
-def changeTREnv(token_key, svr="prod", product=_cfg["my_prod"]):
+def changeTREnv(token_key, svr="vps", product=_cfg["my_prod"]):
     cfg = dict()
 
     global _isPaper
@@ -191,7 +206,7 @@ def _getResultObject(json_data):
 
 # Token 발급, 유효기간 1일, 6시간 이내 발급시 기존 token값 유지, 발급시 알림톡 무조건 발송
 # 모의투자인 경우  svr='vps', 투자계좌(01)이 아닌경우 product='XX' 변경하세요 (계좌번호 뒤 2자리)
-def auth(svr="prod", product=_cfg["my_prod"], url=None):
+def auth(svr="vps", product=_cfg["my_prod"], url=None):
     p = {
         "grant_type": "client_credentials",
     }
@@ -323,7 +338,7 @@ class APIResp:
                 return True
             else:
                 return False
-        except:
+        except Exception:
             return False
 
     def getErrorCode(self):
@@ -396,10 +411,10 @@ class APIRespError(APIResp):
         return EmptyHeader()
 
     def printAll(self):
-        print(f"=== ERROR RESPONSE ===")
+        print("=== ERROR RESPONSE ===")
         print(f"Status Code: {self.status_code}")
         print(f"Error Message: {self.error_text}")
-        print(f"======================")
+        print("======================")
 
     def printError(self, url=""):
         print(f"Error Code : {self.status_code} | {self.error_text}")
@@ -413,6 +428,19 @@ class APIRespError(APIResp):
 def _url_fetch(
         api_url, ptr_id, tr_cont, params, appendHeaders=None, postFlag=False, hashFlag=True
 ):
+    global _last_api_call_time
+
+    # Rate Limiting: 모의투자 0.5초, 실전 0.05초 최소 간격 보장
+    with _rate_lock:
+        now = time.monotonic()
+        elapsed = now - _last_api_call_time
+        if elapsed < _smartSleep:
+            wait_time = _smartSleep - elapsed
+            if _DEBUG:
+                print(f"[RateLimit] Waiting {wait_time:.3f}s before API call")
+            time.sleep(wait_time)
+        _last_api_call_time = time.monotonic()
+
     url = f"{getTREnv().my_url}{api_url}"
 
     headers = _getBaseHeader()  # 기본 header 값 정리
