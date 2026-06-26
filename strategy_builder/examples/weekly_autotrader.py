@@ -55,87 +55,6 @@ def log(message: str):
     print(f"[{timestamp}] {message}")
 
 
-def _extract_order_message(result) -> str:
-    """주문 응답에서 메시지를 안전하게 추출"""
-    if result is None:
-        return ""
-
-    if isinstance(result, pd.DataFrame):
-        if result.empty:
-            return ""
-        row = result.iloc[0]
-        msg = row.get("msg") if "msg" in row.index else ""
-        if isinstance(msg, list):
-            msg = msg[0] if msg else ""
-        if isinstance(msg, str):
-            return msg.strip()
-        if pd.notna(msg):
-            return str(msg).strip()
-        return ""
-
-    return ""
-
-
-def _extract_order_id(result) -> str:
-    """주문 응답에서 주문번호를 안전하게 추출"""
-    if result is None:
-        return ""
-
-    if isinstance(result, pd.DataFrame):
-        if result.empty:
-            return ""
-        row = result.iloc[0]
-        for key in ("ODNO", "odno", "ORDER_NO", "order_no"):
-            if key in row.index:
-                value = row.get(key)
-                if isinstance(value, list):
-                    value = value[0] if value else ""
-                if isinstance(value, str):
-                    value = value.strip()
-                    if value:
-                        return value
-                elif pd.notna(value):
-                    return str(value).strip()
-        return ""
-
-    return ""
-
-
-def is_order_success(result) -> bool:
-    """메시지 텍스트가 비어 있어도 주문번호/시간이 있으면 성공으로 간주"""
-    if result is None:
-        return False
-
-    if isinstance(result, pd.DataFrame):
-        if result.empty:
-            return False
-
-        msg = _extract_order_message(result)
-        if msg:
-            lowered = msg.lower()
-            if any(token in lowered for token in ("success", "정상", "접수", "완료", "처리")):
-                return True
-
-        order_id = _extract_order_id(result)
-        if order_id:
-            return True
-
-        row = result.iloc[0]
-        for key in ("ORD_TMD", "ord_tmd", "KRX_FWDG_ORD_ORGNO", "krx_fwdg_ord_orgno"):
-            if key in row.index and pd.notna(row.get(key)):
-                return True
-
-    return False
-
-
-def _refresh_position_from_account() -> int:
-    """계좌 상태를 다시 조회해 위치를 동기화"""
-    try:
-        return get_positions()
-    except Exception:
-        return trading_state.get("positions", 0)
-
-
 def get_positions():
     """계좌의 삼성전자 보유 수량 조회"""
     try:
@@ -197,21 +116,14 @@ def buy_one():
         
         # 결과 확인
         if result is not None and not result.empty:
-            msg = _extract_order_message(result)
-            if is_order_success(result):
+            # 주문 성공 여부 확인
+            msg = result.get('msg', [''])[0] if isinstance(result.get('msg'), list) else result.get('msg', '')
+            if 'success' in msg.lower() or '주문' in msg:
                 trading_state["positions"] += 1
                 trading_state["buy_times"].append(datetime.now(KST))
-                time.sleep(1)
-                confirmed_qty = _refresh_position_from_account()
-                if confirmed_qty >= 0:
-                    trading_state["positions"] = max(trading_state["positions"], confirmed_qty)
-                order_id = _extract_order_id(result)
-                if order_id:
-                    log(f"✓ 매수 완료! 주문번호: {order_id} / 누적: {trading_state['positions']}주")
-                else:
-                    log(f"✓ 매수 완료! 메시지가 비어 있었지만 주문 접수된 것으로 확인됨 / 누적: {trading_state['positions']}주")
+                log(f"✓ 매수 완료! 누적: {trading_state['positions']}주")
             else:
-                log(f"✗ 매수 실패: {msg or '응답 메시지 없음'}")
+                log(f"✗ 매수 실패: {msg}")
         else:
             log("✗ 매수 응답 없음")
         
@@ -250,18 +162,14 @@ def sell_one():
         
         # 결과 확인
         if result is not None and not result.empty:
-            msg = _extract_order_message(result)
-            if is_order_success(result):
+            msg = result.get('msg', [''])[0] if isinstance(result.get('msg'), list) else result.get('msg', '')
+            if 'success' in msg.lower() or '주문' in msg:
                 log(f"✓ 매도 완료! 판매: {qty_to_sell}주")
                 trading_state["positions"] = max(0, trading_state["positions"] - qty_to_sell)
-                time.sleep(1)
-                confirmed_qty = _refresh_position_from_account()
-                if confirmed_qty >= 0:
-                    trading_state["positions"] = confirmed_qty
                 if trading_state["positions"] == 0:
                     trading_state["buy_times"] = []
             else:
-                log(f"✗ 매도 실패: {msg or '응답 메시지 없음'}")
+                log(f"✗ 매도 실패: {msg}")
         else:
             log("✗ 매도 응답 없음")
         
