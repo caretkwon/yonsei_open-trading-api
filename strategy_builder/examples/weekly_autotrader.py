@@ -133,8 +133,8 @@ def buy_one():
         log(f"✗ 매수 오류: {e}")
 
 
-def sell_all():
-    """보유한 모든 주식 매도 (시장가)"""
+def sell_one():
+    """1주 매도 (시장가)"""
     try:
         if trading_state["positions"] <= 0:
             log("매도할 주식 없음")
@@ -142,7 +142,7 @@ def sell_all():
 
         ka.auth(svr="vps", product="01")
         env = ka.getTREnv()
-        qty_to_sell = trading_state["positions"]
+        qty_to_sell = 1
         
         log(f"매도 주문 시작: {qty_to_sell}주")
         
@@ -165,8 +165,9 @@ def sell_all():
             msg = result.get('msg', [''])[0] if isinstance(result.get('msg'), list) else result.get('msg', '')
             if 'success' in msg.lower() or '주문' in msg:
                 log(f"✓ 매도 완료! 판매: {qty_to_sell}주")
-                trading_state["positions"] = 0
-                trading_state["buy_times"] = []
+                trading_state["positions"] = max(0, trading_state["positions"] - qty_to_sell)
+                if trading_state["positions"] == 0:
+                    trading_state["buy_times"] = []
             else:
                 log(f"✗ 매도 실패: {msg}")
         else:
@@ -184,7 +185,7 @@ def schedule_trades():
     log("주간 자동 매매 시작")
     log(f"종목: {STOCK_NAME} ({STOCK_CODE})")
     log(f"환경: {'모의투자' if trading_state.get('is_paper', True) else '실전투자'}")
-    log("일정: 평일 09:05/09:10/09:15 ... 5분 간격으로 매수/매도 반복")
+    log("일정: 평일 09:00 매수, 09:02 매도, 09:04 매수 ... 4분 간격 매수/매도 반복")
     log("=" * 60)
 
     trading_state["is_running"] = True
@@ -203,13 +204,10 @@ def should_buy():
     if hour < 9 or hour > 15:
         return False
 
-    if hour == 9 and minute < 5:
-        return False
-
     if hour == 15 and minute > 0:
         return False
 
-    return minute in {5, 15, 25, 35, 45, 55}
+    return minute % 4 == 0
 
 
 def should_sell():
@@ -225,13 +223,13 @@ def should_sell():
     if hour < 9 or hour > 15:
         return False
 
-    if hour == 9 and minute < 10:
+    if hour == 9 and minute < 2:
         return False
 
     if hour == 15 and minute > 0:
         return False
 
-    return minute in {10, 20, 30, 40, 50, 0}
+    return minute % 4 == 2
 
 
 def run_manual_mode():
@@ -245,7 +243,7 @@ def run_manual_mode():
         if cmd == "buy":
             buy_one()
         elif cmd == "sell":
-            sell_all()
+            sell_one()
         elif cmd == "status":
             print(f"보유: {trading_state['positions']}주")
             print(f"매수 시간: {[t.strftime('%H:%M') for t in trading_state['buy_times']]}")
@@ -275,16 +273,16 @@ def run_scheduled_mode():
         lambda: buy_one() if should_buy() else None,
         'cron',
         day_of_week='mon-fri',
-        minute='5,15,25,35,45,55',
+        minute='0,4,8,12,16,20,24,28,32,36,40,44,48,52,56',
         second='0',
         name='buy_cycle'
     )
 
     scheduler.add_job(
-        lambda: sell_all() if should_sell() else None,
+        lambda: sell_one() if should_sell() else None,
         'cron',
         day_of_week='mon-fri',
-        minute='10,20,30,40,50,0',
+        minute='2,6,10,14,18,22,26,30,34,38,42,46,50,54,58',
         second='0',
         name='sell_cycle'
     )
